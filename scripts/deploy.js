@@ -8,6 +8,7 @@ async function main() {
   console.log("Deploying contracts with the account:", deployer.address);
   console.log("Using price feed address:", process.env.PRICE_FEED_ADDRESS);
   console.log("Using fee collector address:", process.env.FEE_COLLECTOR_ADDRESS);
+  console.log("Using liquidity collector address:", process.env.LIQUIDITY_COLLECTOR_ADDRESS);
 
   // Verify required environment variables
   if (!process.env.PRICE_FEED_ADDRESS) {
@@ -16,25 +17,39 @@ async function main() {
   if (!process.env.FEE_COLLECTOR_ADDRESS) {
     throw new Error("FEE_COLLECTOR_ADDRESS not set in environment");
   }
+  if (!process.env.LIQUIDITY_COLLECTOR_ADDRESS) {
+    throw new Error("LIQUIDITY_COLLECTOR_ADDRESS not set in environment");
+  }
 
-  // Deploy TokenFactory
+  // Deploy BexLiquidityManager first
+  console.log("Deploying BexLiquidityManager...");
+  const BexLiquidityManager = await hre.ethers.getContractFactory("BexLiquidityManager");
+  const bexLiquidityManager = await BexLiquidityManager.deploy();
+  await bexLiquidityManager.waitForDeployment();
+  const bexLiquidityManagerAddress = await bexLiquidityManager.getAddress();
+  console.log("BexLiquidityManager deployed to:", bexLiquidityManagerAddress);
+
+  // Deploy TokenFactory with updated parameters
+  console.log("Deploying TokenFactory...");
   const TokenFactory = await hre.ethers.getContractFactory("TokenFactory");
-  const tokenFactory = await TokenFactory.deploy(process.env.FEE_COLLECTOR_ADDRESS);
+  const tokenFactory = await TokenFactory.deploy(
+    process.env.FEE_COLLECTOR_ADDRESS,
+    bexLiquidityManagerAddress,
+    process.env.LIQUIDITY_COLLECTOR_ADDRESS
+  );
 
-  // Wait for the contract to be deployed
   await tokenFactory.waitForDeployment();
-
-  // Get the deployed contract address
   const tokenFactoryAddress = await tokenFactory.getAddress();
-
   console.log("TokenFactory deployed to:", tokenFactoryAddress);
 
   // Save deployment info
   const fs = require('fs');
   const deploymentInfo = {
     tokenFactoryAddress,
+    bexLiquidityManagerAddress,
     priceFeedAddress: process.env.PRICE_FEED_ADDRESS,
     feeCollectorAddress: process.env.FEE_COLLECTOR_ADDRESS,
+    liquidityCollectorAddress: process.env.LIQUIDITY_COLLECTOR_ADDRESS,
     timestamp: new Date().toISOString()
   };
   

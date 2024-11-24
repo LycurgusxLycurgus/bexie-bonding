@@ -30,6 +30,8 @@ contract CustomERC20 is Ownable, ERC20 {
 contract TokenFactory is Ownable, ReentrancyGuard {
     uint256 public creationFee = 0.02 ether;
     address public feeCollector;
+    address public liquidityManager;
+    address public liquidityCollector;
 
     event TokenCreated(
         address indexed creator,
@@ -39,8 +41,14 @@ contract TokenFactory is Ownable, ReentrancyGuard {
         string symbol
     );
 
-    constructor(address _feeCollector) Ownable(msg.sender) {
+    constructor(
+        address _feeCollector,
+        address _liquidityManager,
+        address _liquidityCollector
+    ) Ownable(msg.sender) {
         feeCollector = _feeCollector;
+        liquidityManager = _liquidityManager;
+        liquidityCollector = _liquidityCollector;
     }
 
     function createToken(
@@ -59,11 +67,13 @@ contract TokenFactory is Ownable, ReentrancyGuard {
             address(this)  // TokenFactory is set as the owner
         );
 
-        // Create new bonding curve
+        // Create new bonding curve with liquidity parameters
         BondingCurve bondingCurve = new BondingCurve(
             address(token),
             feeCollector,
-            priceFeedAddress
+            priceFeedAddress,
+            liquidityManager,
+            liquidityCollector
         );
 
         // Transfer tokens directly to the bonding curve instead of the creator
@@ -91,5 +101,9 @@ contract TokenFactory is Ownable, ReentrancyGuard {
 
     function setFeeCollector(address _newCollector) external onlyOwner {
         feeCollector = _newCollector;
+    }
+
+    function setLiquidityManager(address _newManager) external onlyOwner {
+        liquidityManager = _newManager;
     }
 }
