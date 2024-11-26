@@ -9,6 +9,7 @@ async function main() {
   console.log("Using price feed address:", process.env.PRICE_FEED_ADDRESS);
   console.log("Using fee collector address:", process.env.FEE_COLLECTOR_ADDRESS);
   console.log("Using liquidity collector address:", process.env.LIQUIDITY_COLLECTOR_ADDRESS);
+  console.log("Using BEX DEX address:", process.env.BEX_DEX_ADDRESS);
 
   // Verify required environment variables
   if (!process.env.PRICE_FEED_ADDRESS) {
@@ -20,11 +21,16 @@ async function main() {
   if (!process.env.LIQUIDITY_COLLECTOR_ADDRESS) {
     throw new Error("LIQUIDITY_COLLECTOR_ADDRESS not set in environment");
   }
+  if (!process.env.BEX_DEX_ADDRESS) {
+    throw new Error("BEX_DEX_ADDRESS not set in environment");
+  }
 
-  // Deploy BexLiquidityManager first
+  // Deploy BexLiquidityManager first with BEX DEX address
   console.log("Deploying BexLiquidityManager...");
   const BexLiquidityManager = await hre.ethers.getContractFactory("BexLiquidityManager");
-  const bexLiquidityManager = await BexLiquidityManager.deploy();
+  const bexLiquidityManager = await BexLiquidityManager.deploy(
+    process.env.BEX_DEX_ADDRESS  // Only needs BEX DEX address
+  );
   await bexLiquidityManager.waitForDeployment();
   const bexLiquidityManagerAddress = await bexLiquidityManager.getAddress();
   console.log("BexLiquidityManager deployed to:", bexLiquidityManagerAddress);
@@ -47,6 +53,7 @@ async function main() {
   const deploymentInfo = {
     tokenFactoryAddress,
     bexLiquidityManagerAddress,
+    bexDexAddress: process.env.BEX_DEX_ADDRESS,
     priceFeedAddress: process.env.PRICE_FEED_ADDRESS,
     feeCollectorAddress: process.env.FEE_COLLECTOR_ADDRESS,
     liquidityCollectorAddress: process.env.LIQUIDITY_COLLECTOR_ADDRESS,
