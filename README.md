@@ -1,3 +1,5 @@
+(REQUIRES UPDATES)
+
 # ERC20 Token Factory with Bonding Curve
 
 ## Description

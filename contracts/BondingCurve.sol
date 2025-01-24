@@ -32,14 +32,16 @@ contract BondingCurve is Ownable, ReentrancyGuard {
     uint256 public totalSupplyTokens;
     uint256 public constant FEE_PERCENT = 2; // 2%
     
-    uint256 public constant INITIAL_MARKET_CAP_USD = 7000 * 1e18; // $7000 in wei
-    uint256 public constant TARGET_MARKET_CAP_USD = 69420 * 1e18; // $69,420 in wei
-    uint256 public constant TARGET_COLLECTED_BERA_USD = 13884 * 1e18; // $13,884 in wei
-    uint256 public constant TOTAL_TOKENS = 1000000000 * 1e18; // 1 billion tokens
+    uint256 public constant TOTAL_TOKENS = 1_000_000_000 * 1e18; // 1B tokens
+    uint256 public constant TOKEN_SOLD_THRESHOLD = 800_000_000 * 1e18; // 80% for bonding curve
+    uint256 public constant BERA_RAISED_THRESHOLD = 6 ether; // 6 BERA target
+    uint256 public constant INITIAL_PRICE_MULTIPLIER = 7; // $0.000007 per token initially
+    uint256 public constant FINAL_PRICE_MULTIPLIER = 75; // $0.000075 target at 3000 USD/BERA
+    uint256 public constant PRICE_DECIMALS = 1e6; // Price multiplier decimals
 
-    uint256 public currentMarketCapUSD;
     uint256 public collectedBeraUSD;
-    bool public targetReached;
+    uint256 public currentPrice;
+    bool public liquidityDeployed;
 
     AggregatorV3Interface internal priceFeed;
     uint256 public lastBeraPrice;
@@ -48,13 +50,10 @@ contract BondingCurve is Ownable, ReentrancyGuard {
 
     address public liquidityManager;
     address public liquidityCollector;
-    bool public liquidityDeployed;
 
     event TokensPurchased(address indexed buyer, uint256 amount, uint256 price);
     event TokensSold(address indexed seller, uint256 amount, uint256 price);
     event PriceUpdated(uint256 newPrice, uint256 timestamp);
-    event MarketCapUpdated(uint256 newMarketCap, uint256 collectedBeraUSD);
-    event TargetReached(uint256 marketCap, uint256 collectedBera);
     event LiquidityDeployedToBex(uint256 beraAmount, uint256 tokenAmount);
 
     constructor(
@@ -68,11 +67,13 @@ contract BondingCurve is Ownable, ReentrancyGuard {
         feeCollector = _feeCollector;
         liquidityManager = _liquidityManager;
         liquidityCollector = _liquidityCollector;
-        totalSupplyTokens = TOTAL_TOKENS;
         priceFeed = AggregatorV3Interface(_priceFeed);
+        
+        totalSupplyTokens = TOTAL_TOKENS;
         updateBeraPrice();
-        currentMarketCapUSD = INITIAL_MARKET_CAP_USD;
-        collectedBeraUSD = 0;
+        
+        // Set initial price in raw form
+        currentPrice = (INITIAL_PRICE_MULTIPLIER * getBeraPrice()) / (3000 * 1e18);
     }
 
     function updateBeraPrice() public {
@@ -94,105 +95,63 @@ contract BondingCurve is Ownable, ReentrancyGuard {
         return lastBeraPrice;
     }
 
-    function getBuyPrice(uint256 beraAmount) public view returns (uint256) {
-        // Calculate current market cap
-        uint256 currentMarketCap = currentMarketCapUSD;
-        if (totalSupplyTokens < TOTAL_TOKENS) {
-            unchecked {
-                // Safe because totalSupplyTokens is always <= TOTAL_TOKENS
-                uint256 tokensDiff = TOTAL_TOKENS - totalSupplyTokens;
-                currentMarketCap += (tokensDiff * INITIAL_MARKET_CAP_USD) / TOTAL_TOKENS;
-            }
-        }
+    function getCurrentPrice() public view returns (uint256) {
+        uint256 beraPrice = getBeraPrice(); // 18 decimals
         
-        // Calculate tokens to receive using unchecked to prevent overflow
-        unchecked {
-            return (beraAmount * TOTAL_TOKENS) / currentMarketCap;
+        if (totalSupplyTokens == TOTAL_TOKENS) {
+            // For $0.000007: (7 * beraPrice) / (3000 * 1e18)
+            return (INITIAL_PRICE_MULTIPLIER * beraPrice) / (3000 * 1e18);
         }
-    }
 
-    function updateMarketMetrics(uint256 beraAmount, bool isBuy) internal {
-        // Get and update BERA price
-        updateBeraPrice();
-        uint256 beraValueUSD = (beraAmount * getBeraPrice()) / 1e18;
+        uint256 soldTokens = TOTAL_TOKENS - totalSupplyTokens;
         
-        if (isBuy) {
-            currentMarketCapUSD += beraValueUSD;
-            
-            // Calculate collected BERA based on market cap proportion
-            if (currentMarketCapUSD > INITIAL_MARKET_CAP_USD) {
-                uint256 mcapDiff = currentMarketCapUSD - INITIAL_MARKET_CAP_USD;
-                uint256 totalMcapRange = TARGET_MARKET_CAP_USD - INITIAL_MARKET_CAP_USD;
-                collectedBeraUSD = (mcapDiff * TARGET_COLLECTED_BERA_USD) / totalMcapRange;
-            } else {
-                collectedBeraUSD = 0;
-            }
-        } else {
-            // Prevent underflow in market cap calculation
-            currentMarketCapUSD = currentMarketCapUSD > beraValueUSD ? 
-                currentMarketCapUSD - beraValueUSD : INITIAL_MARKET_CAP_USD;
-            
-            // Recalculate collected BERA based on new market cap
-            if (currentMarketCapUSD > INITIAL_MARKET_CAP_USD) {
-                uint256 mcapDiff = currentMarketCapUSD - INITIAL_MARKET_CAP_USD;
-                uint256 totalMcapRange = TARGET_MARKET_CAP_USD - INITIAL_MARKET_CAP_USD;
-                collectedBeraUSD = (mcapDiff * TARGET_COLLECTED_BERA_USD) / totalMcapRange;
-            } else {
-                collectedBeraUSD = 0;
-            }
-        }
-
-        emit MarketCapUpdated(currentMarketCapUSD, collectedBeraUSD);
-
-        // Check if target conditions are met and liquidity hasn't been deployed yet
-        if (!liquidityDeployed && 
-            currentMarketCapUSD >= TARGET_MARKET_CAP_USD && 
-            collectedBeraUSD >= TARGET_COLLECTED_BERA_USD) {
-            targetReached = true;
-            emit TargetReached(currentMarketCapUSD, collectedBeraUSD);
-            deployLiquidityToBex();
-        }
+        // Calculate prices in raw form (not multiplied by 1e6)
+        uint256 initialPrice = (INITIAL_PRICE_MULTIPLIER * beraPrice) / (3000 * 1e18);
+        uint256 finalPrice = (FINAL_PRICE_MULTIPLIER * beraPrice) / (3000 * 1e18);
+        uint256 priceDiff = finalPrice - initialPrice;
+        
+        return initialPrice + (priceDiff * soldTokens) / TOKEN_SOLD_THRESHOLD;
     }
 
     function buyTokens(uint256 minTokens) external payable nonReentrant {
         require(msg.value > 0, "Zero BERA amount");
+        require(totalSupplyTokens > 0, "No tokens available");
+        
         updateBeraPrice();
-        uint256 tokensToReceive = getBuyPrice(msg.value);
-        require(tokensToReceive >= minTokens, "Insufficient tokens for BERA sent");
+        uint256 beraValueUSD = (msg.value * getBeraPrice()) / 1e18;
+        
+        // Calculate tokens based on current price
+        uint256 price = getCurrentPrice();
+        uint256 tokensToMint = (beraValueUSD * PRICE_DECIMALS) / price;
+        
+        require(tokensToMint >= minTokens, "Insufficient tokens for BERA sent");
+        require(tokensToMint <= totalSupplyTokens, "Not enough tokens in supply");
 
         uint256 fee = (msg.value * FEE_PERCENT) / 100;
-        uint256 effectiveBeraAmount = msg.value - fee;
-        
         (bool sent, ) = feeCollector.call{value: fee}("");
         require(sent, "Failed to send fee");
 
-        token.mint(msg.sender, tokensToReceive);
-        totalSupplyTokens -= tokensToReceive;
+        token.mint(msg.sender, tokensToMint);
+        totalSupplyTokens -= tokensToMint;
+        collectedBeraUSD += beraValueUSD;
 
-        updateMarketMetrics(effectiveBeraAmount, true);
-        emit TokensPurchased(msg.sender, tokensToReceive, msg.value);
+        // Check deployment conditions
+        if (!liquidityDeployed && 
+            collectedBeraUSD >= (BERA_RAISED_THRESHOLD * getBeraPrice()) / 1e18 &&
+            (TOTAL_TOKENS - totalSupplyTokens) >= TOKEN_SOLD_THRESHOLD) {
+            deployLiquidityToBex();
+        }
+
+        emit TokensPurchased(msg.sender, tokensToMint, msg.value);
     }
 
     function getSellPrice(uint256 tokenAmount) public view returns (uint256) {
         require(tokenAmount > 0, "Zero token amount");
-        require(tokenAmount <= totalSupplyTokens, "Not enough tokens to sell");
+        require(totalSupplyTokens > 0, "No tokens in supply");
         
-        uint256 beraPrice = getBeraPrice();
-        
-        // Calculate current market cap
-        uint256 currentMarketCap = currentMarketCapUSD;
-        if (totalSupplyTokens < TOTAL_TOKENS) {
-            unchecked {
-                // Safe because totalSupplyTokens is always <= TOTAL_TOKENS
-                uint256 tokensDiff = TOTAL_TOKENS - totalSupplyTokens;
-                currentMarketCap += (tokensDiff * INITIAL_MARKET_CAP_USD) / TOTAL_TOKENS;
-            }
-        }
-
-        // Calculate BERA to receive using unchecked to prevent overflow
-        unchecked {
-            return (tokenAmount * currentMarketCap) / TOTAL_TOKENS;
-        }
+        uint256 price = getCurrentPrice();
+        uint256 valueUSD = (tokenAmount * price) / PRICE_DECIMALS;
+        return (valueUSD * 1e18) / getBeraPrice();
     }
 
     function sellTokens(uint256 tokenAmount) external nonReentrant {
@@ -201,47 +160,48 @@ contract BondingCurve is Ownable, ReentrancyGuard {
         
         updateBeraPrice();
         uint256 beraToReceive = getSellPrice(tokenAmount);
+        require(beraToReceive <= address(this).balance, "Insufficient BERA balance");
         
         uint256 fee = (beraToReceive * FEE_PERCENT) / 100;
         uint256 effectiveBeraAmount = beraToReceive - fee;
 
         token.burn(msg.sender, tokenAmount);
         totalSupplyTokens += tokenAmount;
-
+        
+        // Send fee first
         (bool sent1, ) = feeCollector.call{value: fee}("");
         require(sent1, "Failed to send fee");
 
+        // Then send BERA to seller
         (bool sent2, ) = msg.sender.call{value: effectiveBeraAmount}("");
         require(sent2, "Failed to send BERA");
 
-        updateMarketMetrics(effectiveBeraAmount, false);
         emit TokensSold(msg.sender, tokenAmount, beraToReceive);
     }
 
     function deployLiquidityToBex() internal {
-        require(targetReached, "Target not reached");
         require(!liquidityDeployed, "Liquidity already deployed");
-        
-        // Calculate BERA amount needed for liquidity (6942 USD worth of BERA)
-        uint256 beraForLiquidity = (6942 * 1e18 * 1e18) / getBeraPrice(); // 6942 USD worth of BERA
-        uint256 tokenAmount = getBuyPrice(beraForLiquidity);
+        require(address(this).balance >= 6 ether, "Insufficient BERA for liquidity");
 
-        // Transfer BERA to this contract if needed
-        require(address(this).balance >= beraForLiquidity * 2, "Insufficient BERA for liquidity");
+        uint256 tokenAmount = 200000000 * 1e18; // 200M tokens
 
-        // Mint tokens for liquidity and approve liquidity manager
+        // Mint tokens for liquidity
         token.mint(address(this), tokenAmount);
         require(token.approve(liquidityManager, tokenAmount), "Token approval failed");
 
-        // Deploy liquidity through manager
-        IBexLiquidityManager(liquidityManager).deployLiquidity{value: beraForLiquidity * 2}(
+        // Deploy 5 BERA to liquidity
+        IBexLiquidityManager(liquidityManager).deployLiquidity{value: 5 ether}(
             address(token),
             tokenAmount,
             liquidityCollector
         );
 
+        // Send 1 BERA to fee collector
+        (bool sent, ) = feeCollector.call{value: 1 ether}("");
+        require(sent, "Failed to send BERA to collector");
+
         liquidityDeployed = true;
-        emit LiquidityDeployedToBex(beraForLiquidity * 2, tokenAmount);
+        emit LiquidityDeployedToBex(6 ether, tokenAmount);
     }
 
     receive() external payable {}

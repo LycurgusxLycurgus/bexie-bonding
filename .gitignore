@@ -20,7 +20,7 @@ node_modules
 ignition/deployments/chain-31337
 
 /monoprompting
-/templates
 /test 
 deployment-info.json
 factory-deployment-info.json
+/scripts0.2

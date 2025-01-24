@@ -33,12 +33,8 @@ contract BexLiquidityManager is Ownable {
         uint256 tokenAmount,
         address liquidityCollector
     ) external payable onlyOwner {
-        require(msg.value > 0, "No BERA sent for liquidity");
+        require(msg.value == 5 ether, "Exactly 5 BERA required for liquidity");
         require(tokenAmount > 0, "No tokens provided for liquidity");
-        
-        // Split BERA: half for liquidity, half for collector
-        uint256 liquidityBera = msg.value / 2;
-        uint256 collectorBera = msg.value - liquidityBera;
 
         // Get tokens from caller
         require(IERC20(token).transferFrom(msg.sender, address(this), tokenAmount), "Token transfer failed");
@@ -49,11 +45,11 @@ contract BexLiquidityManager is Ownable {
         // Prepare liquidity deployment command
         bytes memory cmd = abi.encodePacked(
             uint8(3),                // code: fixed liquidity units
-            token,                   // base token (your token)
+            token,                   // base token
             uint256(0),             // poolIdx
             int24(0),               // bidTick (full range)
             int24(0),               // askTick (full range)
-            uint128(liquidityBera), // qty in BERA
+            uint128(msg.value),     // qty in BERA
             uint128(0),             // limitLower
             uint128(type(uint128).max), // limitHigher
             uint8(0),               // settleFlags
@@ -61,11 +57,7 @@ contract BexLiquidityManager is Ownable {
         );
 
         // Deploy liquidity to BEX
-        try ICrocSwapDex(bexDex).userCmd{value: liquidityBera}(2, cmd) {
-            // Send remaining BERA to collector
-            (bool sent, ) = liquidityCollector.call{value: collectorBera}("");
-            require(sent, "Failed to send BERA to collector");
-
+        try ICrocSwapDex(bexDex).userCmd{value: msg.value}(2, cmd) {
             emit LiquidityDeployed(token, msg.value, tokenAmount, liquidityCollector);
         } catch Error(string memory reason) {
             revert(reason);

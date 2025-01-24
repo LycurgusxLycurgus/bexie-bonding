@@ -28,7 +28,7 @@ contract CustomERC20 is Ownable, ERC20 {
 }
 
 contract TokenFactory is Ownable, ReentrancyGuard {
-    uint256 public creationFee = 0.02 ether;
+    uint256 public creationFee = 0.002 ether;
     address public feeCollector;
     address public liquidityManager;
     address public liquidityCollector;
