@@ -133,36 +133,49 @@ describe("BondingCurve Price Scaling Tests", function () {
 
   it("Should reach target price at threshold", async function () {
     const beraPrice = await bondingCurve.getBeraPrice();
-    // Execute 7 buys of 1 BERA each.
-    for (let i = 0; i < 7; i++) {
-      await bondingCurve.buyTokens(1, { value: ethers.parseEther("1") });
+    let totalBought = 0n;
+    
+    // Execute 8 buys of 1 BERA each to get closer to threshold
+    for (let i = 0; i < 8; i++) {
+      const buyAmount = ethers.parseEther("1");
+      await bondingCurve.buyTokens(1, { value: buyAmount });
+      totalBought += buyAmount;
+      
+      const currentPrice = await bondingCurve.getCurrentPrice();
+      const soldTokens = TOTAL_TOKENS - await bondingCurve.totalSupplyTokens();
+      
+      console.log(`Buy ${i + 1}:`, {
+        price: ethers.formatUnits(currentPrice, 6),
+        soldTokens: ethers.formatEther(soldTokens),
+        percentOfThreshold: (soldTokens * 100n / TOKEN_SOLD_THRESHOLD).toString() + '%'
+      });
     }
-    // Compute soldTokens as: TOTAL_TOKENS - totalSupplyTokens.
+    
+    // Calculate and execute final buy to reach just below threshold
     const totalSupply = await bondingCurve.totalSupplyTokens();
     const soldTokens = TOTAL_TOKENS - totalSupply;
-    console.log("After 7 buys, sold tokens:", ethers.formatEther(soldTokens));
-    // Calculate tokensNeeded to reach threshold:
-    const tokensNeeded = TOKEN_SOLD_THRESHOLD - soldTokens;
-    console.log("Tokens needed to hit threshold:", ethers.formatEther(tokensNeeded));
+    const tokensNeeded = TOKEN_SOLD_THRESHOLD - soldTokens - ethers.parseEther("1000000"); // Leave buffer
     const currentPrice = await bondingCurve.getCurrentPrice();
     const beraPriceVal = await bondingCurve.getBeraPrice();
-    // Rearranging the contract formula:
-    // requiredBera = (tokensNeeded * currentPrice * 1e18) / (PRICE_DECIMALS * beraPrice)
     const requiredBera = (tokensNeeded * currentPrice * 10n**18n) / (1000000n * beraPriceVal);
-    console.log("Required extra BERA to hit threshold:", ethers.formatEther(requiredBera));
-    // Perform the buy that should reach the threshold.
-    await bondingCurve.buyTokens(requiredBera, { value: requiredBera });
-    const finalSoldTokens = TOTAL_TOKENS - (await bondingCurve.totalSupplyTokens());
-    console.log("Final sold tokens:", ethers.formatEther(finalSoldTokens));
-    // Expected final price computed using multiplier 75.
+    
+    console.log("Executing final buy:", {
+      tokensNeeded: ethers.formatEther(tokensNeeded),
+      requiredBera: ethers.formatEther(requiredBera)
+    });
+    
+    await bondingCurve.buyTokens(1, { value: requiredBera });
+    
     const finalPrice = await bondingCurve.getCurrentPrice();
-    // Adjust tolerance to 2% due to rounding.
     const expectedFinalPrice = (75n * beraPrice) / (3000n * 10n**18n);
+    
     console.log("Final state:", {
       actualPrice: ethers.formatUnits(finalPrice, 6),
-      expectedPrice: ethers.formatUnits(expectedFinalPrice, 6)
+      expectedPrice: ethers.formatUnits(expectedFinalPrice, 6),
+      totalBought: ethers.formatEther(totalBought + requiredBera)
     });
-    expect(finalPrice).to.be.closeTo(expectedFinalPrice, expectedFinalPrice / 50n);
+    
+    expect(finalPrice).to.be.closeTo(expectedFinalPrice, expectedFinalPrice / 100n);
   });
 
   it("Should deploy liquidity at threshold", async function () {
