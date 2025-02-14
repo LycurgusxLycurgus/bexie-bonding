@@ -37,8 +37,11 @@ const bondingCurve = BondingCurve.attach("YOUR_BONDING_CURVE_ADDRESS");
 // Buy tokens with 0.1 BERA
 const buyAmount = ethers.parseEther("0.1");
 
-// Execute purchase (minimum tokens parameter is unused)
-const tx = await bondingCurve.buyTokens(1, { value: buyAmount });
+// Execute purchase (note: parameter is unused by contract)
+const tx = await bondingCurve.buyTokens(0, { value: buyAmount });
+// Or better, using empty parameter since it's unused:
+// const tx = await bondingCurve.buyTokens({ value: buyAmount });
+
 const receipt = await tx.wait();
 
 // Get purchase event
@@ -67,6 +70,7 @@ console.log({
 const beneficiary = "RECIPIENT_ADDRESS";
 const buyAmount = ethers.parseEther("0.1");
 
+// Note: First parameter is unused by contract
 const tx = await bondingCurve.buyTokensFor(beneficiary, { value: buyAmount });
 await tx.wait();
 ```
